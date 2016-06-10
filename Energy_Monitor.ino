@@ -39,25 +39,32 @@ bool sendInflux(String payload) {
     return true;
 }
 
-#define WAIT_CURRENT_TIME 2000 /* milliseconds */
+#define WAIT_CURRENT_TIME 1000 /* milliseconds */
 #define WAIT_PUBLISH_TIME 60000 /* milliseconds */
 
 typedef enum {
-    INITIALIZE_SENSORS,
     WAIT_ONLINE,
     ALIVE,
     PUBLISH,
     SET_TIMER,
-    WAIT_CURRENT,
-    WAIT_PUBLISH,
+    CHECK_STATUS,
     READ_CHANNEL_1,
     READ_CHANNEL_2,
-    READ_SENSORS,
+    READ_BME280,
     CREATE_STRING
 } FSM_state_t;
 
-void setup() {
-    
+void setup() 
+{
+    if(!current.initialize(0,0,0,0)){
+        //Serial.println("Initialize failed");
+    }
+
+    if (!bme.begin()) {
+        //Serial.println("Could not find a valid BME280 sensor, check wiring!");
+    while (1);
+    }
+    delay(1000);
 }
 
 void loop()
@@ -81,24 +88,9 @@ void loop()
 
     switch (myState) {
         
-        case INITIALIZE_SENSORS:
-            if(!current.initialize(0,0,0,0)){
-                //Serial.println("Initialize failed");
-            }
-    
-
-            if (!bme.begin()) {
-                //Serial.println("Could not find a valid BME280 sensor, check wiring!");
-            while (1);
-            }
-            //Particle.publish("Sensors initialized");
-            myState = ALIVE;
-            break;
-    
-
         case WAIT_ONLINE: // stay in this state  until we're connected to the big old cloud in the sky
             if (Particle.connected()){
-                myState = INITIALIZE_SENSORS;
+                myState = ALIVE;
             }
             break;
 
@@ -111,8 +103,8 @@ void loop()
             if ( !Particle.connected() ) { // first though ... did we get disconnected somehow?
                 myState = WAIT_ONLINE;
             } else {
-                Particle.publish("PING!! at ", String(millis()) );
-                //Particle.publish("CH2", String::format("{\"KWh\":%.2f,\"W\":%.2f,\"Temp\":%.2f,\"Hum\":%.2f,\"Pres\":%.2f}", kwh_ch2, wattage_ch2, temp, hum, pres), 60, PRIVATE);
+                //Particle.publish("PING!! at ", String(millis()) );
+                Particle.publish("Energy Monitor", String::format("{\"KWh_CH1\":%.2f,\"W_CH1\":%.2f,\"KWh_CH2\":%.2f,\"W_CH2\":%.2f,\"Temp\":%.2f,\"Hum\":%.2f,\"Pres\":%.2f}", kwh_ch1, wattage_ch1, kwh_ch2, wattage_ch2, temp, hum, pres), 60, PRIVATE);
                 sendInflux(data);
 
                 myState = SET_TIMER;
@@ -122,66 +114,57 @@ void loop()
         case SET_TIMER: // record the current time for the WAIT state to reference back to
             saveTime = millis();
             //Particle.publish("Timer set");
-            myState = WAIT_CURRENT;
+            myState = CHECK_STATUS;
             break;
 
-        case WAIT_CURRENT: // stay in this state until TIME_TO_WAIT milliseconds have gone by since the SET_TIMER state
-            if ( millis() > (saveTime + WAIT_CURRENT_TIME) ) {
-                
-                // Time's up! But we'll drop out of loop() for and get it done next time through
-                // This allows all the background network stuff the best chance of keeping up with business
-                //Particle.publish("Ready to read current");
-                myState = READ_CHANNEL_1; 
-            }
-            break;
-            
-        case WAIT_PUBLISH: // stay in this state until TIME_TO_WAIT milliseconds have gone by since the SET_TIMER state
+        case CHECK_STATUS: // stay in this state until TIME_TO_WAIT milliseconds have gone by since the SET_TIMER state
             if ( millis() > (saveTime + WAIT_PUBLISH_TIME) ) {
                 
                 // Time's up! But we'll drop out of loop() for and get it done next time through
                 // This allows all the background network stuff the best chance of keeping up with business
-                myState = CREATE_STRING; 
-            } else {
-                myState = WAIT_CURRENT;
+                //Particle.publish("Ready to read current");
+                myState = CREATE_STRING;
+            } else if ( millis() > (saveTime + WAIT_CURRENT_TIME) ) {
+                myState =  READ_CHANNEL_1; 
             }
             break;
-            
+
         case READ_CHANNEL_1: 
-            if( !current.deviceStatusReady){
-                Particle.publish("not ready");
-                myState = WAIT_CURRENT;
-            } else {
-                double c1 = current.readChannelCurrent(1);
-                if(c1 != current.failedCommand){
-                    //Particle.publish("hello 2");
-                    //Publish most recent current reading
-                    currentReading_ch1 = c1;
+            if(current.deviceStatusReady){
+                //while(current.deviceStatusReady){
+                    double c1 = current.readChannelCurrent(1);
+                    if(c1 != current.failedCommand){
+                        //Particle.publish("hello 2");
+                        //Publish most recent current reading
+                        currentReading_ch1 = c1;
            
-                    lastReading = currentReading_ch1;
-                    // Calculate Kilowatt hours
-                    // Calculate Wattage
-                    double wattage_ch1 = currentReading_ch1*ACVoltage;
-                    //Calculate hours
-                    upTime = millis();
+                        lastReading = currentReading_ch1;
+                        // Calculate Kilowatt hours
+                        // Calculate Wattage
+                        double wattage_ch1 = currentReading_ch1*ACVoltage;
+                        //Calculate hours
+                        upTime = millis();
                 
-                    double hours_ch1 = (upTime - lastReadTime) / (60.00 * 60.00 * 1000.00);
+                        double hours_ch1 = (upTime - lastReadTime) / (60.00 * 60.00 * 1000.00);
                 
-                    //Calculate Kilowatt hours
-                    kwh_ch1 = kwh_ch1 + ((wattage_ch1 * hours_ch1)/1000);
-                    //Particle.publish(String(c1));
-                    myState = READ_CHANNEL_2;
-                    
-                } else{
-                    Particle.publish("Reading of current channel 1 failed");
-                    myState = WAIT_CURRENT;
-                }
+                        //Calculate Kilowatt hours
+                        kwh_ch1 = kwh_ch1 + ((wattage_ch1 * hours_ch1)/1000);
+                        //Particle.publish(String(c1));
+                        myState = READ_CHANNEL_2;
+                        break;
+                    } else{
+                        Particle.publish("Reading of current channel 1 failed");
+                        myState = CHECK_STATUS;
+                    }
+                //}
+            } else{
+                Particle.publish("Device 1 not ready");
+                myState = CHECK_STATUS;
             }
             break;
             
         case READ_CHANNEL_2:
-            if( !current.deviceStatusReady){
-                myState = WAIT_CURRENT;
-            } else {
+            if(current.deviceStatusReady){
                 double c2 = current.readChannelCurrent(2);
                 if(c2 != current.failedCommand){
                     //Publish most recent current reading
@@ -196,23 +179,29 @@ void loop()
                     //Calculate Kilowatt hours
                     kwh_ch2 = kwh_ch2 + ((wattage_ch2 * hours_ch2)/1000);
                     //Particle.publish(String(wattage_ch2));
-                    myState = READ_SENSORS;
+                    myState = READ_BME280;
+                    break;
                 }else{
                     Particle.publish("Reading of current channel 2 failed");
-                    myState = WAIT_CURRENT;
+                    myState = CHECK_STATUS;
                 }
+            } else{
+                Particle.publish("Device 2 not ready");
+                myState = CHECK_STATUS;
             }
+            break;
         
-        case READ_SENSORS:
+        case READ_BME280:
             temp = bme.readTemperature();
             pres = bme.readPressure() / 100.0F;
             hum = bme.readHumidity();
-            //Particle.publish(String(hum));
-            myState = WAIT_PUBLISH;
-            break;
-        
+            //Particle.publish("BME280");
+            myState = CHECK_STATUS;
+        break;
+            
         case CREATE_STRING:
             data = "sensors,Location=Bachgasse Temp=" + String(temp, 2) + ",Hum=" + String(hum, 2) + ",Pres=" + String(pres) + ",kWh=" + String(kwh_ch2, 2) + ",P=" + String(wattage_ch2);
+            //Particle.publish(data);
             myState = PUBLISH;
             break;
         
