@@ -48,10 +48,10 @@ typedef enum {
     PUBLISH,
     SET_TIMER,
     CHECK_STATUS,
-    READ_CHANNEL_1,
-    READ_CHANNEL_2,
+    READ_CURRENT,
     READ_BME280,
-    CREATE_STRING
+    CREATE_STRING,
+    NOT_READY
 } FSM_state_t;
 
 void setup() 
@@ -125,13 +125,12 @@ void loop()
                 //Particle.publish("Ready to read current");
                 myState = CREATE_STRING;
             } else if ( millis() > (saveTime + WAIT_CURRENT_TIME) ) {
-                myState =  READ_CHANNEL_1; 
+                myState =  READ_CURRENT; 
             }
             break;
 
-        case READ_CHANNEL_1: 
+        case READ_CURRENT: 
             if(current.deviceStatusReady){
-                //while(current.deviceStatusReady){
                     double c1 = current.readChannelCurrent(1);
                     if(c1 != current.failedCommand){
                         //Particle.publish("hello 2");
@@ -150,45 +149,43 @@ void loop()
                         //Calculate Kilowatt hours
                         kwh_ch1 = kwh_ch1 + ((wattage_ch1 * hours_ch1)/1000);
                         //Particle.publish(String(c1));
-                        myState = READ_CHANNEL_2;
-                        break;
                     } else{
                         Particle.publish("Reading of current channel 1 failed");
                         myState = CHECK_STATUS;
                     }
-                //}
+                    
+                    
+                    double c2 = current.readChannelCurrent(2);
+                    if(c2 != current.failedCommand){
+                        //Publish most recent current reading
+                        currentReading_ch2 = c2;
+                        //lastReading = currentReading;
+                        // Calculate Kilowatt hours
+                        // Calculate Wattage
+                        wattage_ch2 = currentReading_ch2 * ACVoltage;
+                        //Calculate hours
+                        double hours_ch2 = (upTime - lastReadTime)/ (60.00 * 60.00 * 1000.00);
+                        lastReadTime = millis();
+                        //Calculate Kilowatt hours
+                        kwh_ch2 = kwh_ch2 + ((wattage_ch2 * hours_ch2)/1000);
+                        //Particle.publish(String(wattage_ch2));
+                        myState = READ_BME280;
+                        break;
+                    }else{
+                        Particle.publish("Reading of current channel 2 failed");
+                        myState = CHECK_STATUS;
+                    }
+
             } else{
-                Particle.publish("Device 1 not ready");
-                myState = CHECK_STATUS;
+                Particle.publish("Device not ready");
+                myState = NOT_READY;
             }
             break;
             
-        case READ_CHANNEL_2:
-            if(current.deviceStatusReady){
-                double c2 = current.readChannelCurrent(2);
-                if(c2 != current.failedCommand){
-                    //Publish most recent current reading
-                    currentReading_ch2 = c2;
-                    //lastReading = currentReading;
-                    // Calculate Kilowatt hours
-                    // Calculate Wattage
-                    wattage_ch2 = currentReading_ch2 * ACVoltage;
-                    //Calculate hours
-                    double hours_ch2 = (upTime - lastReadTime)/ (60.00 * 60.00 * 1000.00);
-                    lastReadTime = millis();
-                    //Calculate Kilowatt hours
-                    kwh_ch2 = kwh_ch2 + ((wattage_ch2 * hours_ch2)/1000);
-                    //Particle.publish(String(wattage_ch2));
-                    myState = READ_BME280;
-                    break;
-                }else{
-                    Particle.publish("Reading of current channel 2 failed");
-                    myState = CHECK_STATUS;
-                }
-            } else{
-                Particle.publish("Device 2 not ready");
-                myState = CHECK_STATUS;
-            }
+        case NOT_READY:
+            delay(2000);
+            Particle.publish("not ready -.-");
+            myState = READ_CURRENT;
             break;
         
         case READ_BME280:
